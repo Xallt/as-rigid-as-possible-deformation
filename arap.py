@@ -300,8 +300,6 @@ class Deformer:
             rotation = V_transpose.transpose().dot(U.transpose())
         return rotation
 
-    # def calculate_rotation_matrices(self):
-
     def calculate_covariance_matrix_for_cell(self, vert_id):
         # s_i = P_i * D_i * P_i_prime_transpose
         vert_i_prime = self.verts_prime[vert_id]  # (N, 3)
@@ -324,12 +322,13 @@ class Deformer:
     def calculate_b_for(self, i):
         b = np.zeros((1, 3))
         neighbours = self.neighbours_of(i)
-        for j in neighbours:
-            w_ij = self.weight_matrix[i, j] / 2.0
-            r_ij = self.cell_rotations[i] + self.cell_rotations[j]
-            # print(r_ij)
-            p_ij = self.verts[i] - self.verts[j]
-            b += w_ij * r_ij.dot(p_ij)
+        R = self.cell_rotations[neighbours]  # (d_i, 3, 3)
+        R_avg = self.cell_rotations[i][None] + R  # (d_i, 3, 3)
+        P = self.P_i_array[i].T  # (d_i, 3)
+        b = (np.einsum("ijk,ik->ij", R_avg, P) * self.weight_matrix[i, neighbours][:, None]).sum(
+            axis=0
+        ) / 2
+
         return b
 
     def calculate_energy(self):
