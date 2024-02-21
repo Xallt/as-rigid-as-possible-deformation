@@ -138,11 +138,7 @@ class Deformer:
 
     # Returns a set of IDs that are neighbours to this vertexID (not including the input ID)
     def neighbours_of(self, vert_id):
-        neighbours = []
-        for n_id in range(self.n):
-            if self.neighbour_matrix[vert_id, n_id] == 1:
-                neighbours.append(n_id)
-        return neighbours
+        return np.where(self.neighbour_matrix[vert_id])[0]
 
     def build_weight_matrix(self):
         print("Generating Weight Matrix")
