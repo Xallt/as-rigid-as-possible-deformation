@@ -325,7 +325,7 @@ class Deformer:
             P_i_prime[:, n_i] = vert_i_prime - vert_j_prime
 
         P_i_prime = P_i_prime.transpose()
-        return P_i.dot(D_i).dot(P_i_prime)
+        return P_i @ D_i @ P_i_prime
 
     def output_s_prime_to_file(self):
         # Write self.vers_prime and self.faces to a file
