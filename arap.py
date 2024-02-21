@@ -300,19 +300,21 @@ class Deformer:
             rotation = V_transpose.transpose().dot(U.transpose())
         return rotation
 
+    # def calculate_rotation_matrices(self):
+
     def calculate_covariance_matrix_for_cell(self, vert_id):
         # s_i = P_i * D_i * P_i_prime_transpose
-        vert_i_prime = self.verts_prime[vert_id]
+        vert_i_prime = self.verts_prime[vert_id]  # (N, 3)
 
-        neighbour_ids = self.neighbours_of(vert_id)
+        neighbour_ids = self.neighbours_of(vert_id)  # (d_i)
 
-        D_i = np.diag(self.weight_matrix[vert_id, neighbour_ids])
+        D_i = np.diag(self.weight_matrix[vert_id, neighbour_ids])  # (d_i, d_i)
 
-        P_i = self.P_i_array[vert_id]
-        P_i_prime = vert_i_prime[:, None] - self.verts_prime[neighbour_ids].T
+        P_i = self.P_i_array[vert_id]  # (3, d_i)
+        P_i_prime = vert_i_prime[:, None] - self.verts_prime[neighbour_ids].T  # (3, d_i)
 
         P_i_prime = P_i_prime.transpose()
-        return P_i @ D_i @ P_i_prime
+        return P_i @ D_i @ P_i_prime  # (3, 3)
 
     def output_s_prime_to_file(self):
         # Write self.vers_prime and self.faces to a file
