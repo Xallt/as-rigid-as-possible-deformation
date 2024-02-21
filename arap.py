@@ -31,6 +31,9 @@ class Deformer:
         self.filename = filename
         self.POWER = float("Inf")
 
+        self.read_file()
+        self.build_weight_matrix()
+
     def read_file(self):
         # Load the mesh file with trimesh
         mesh = trimesh.load(self.filename, force="mesh")
@@ -415,8 +418,6 @@ if __name__ == "__main__":
     t = time.time()
 
     d = Deformer(filename)
-    d.read_file()
-    d.build_weight_matrix()
 
     deformation_matrix = np.load(deformation_file)
     d.set_deformation(deformation_matrix)
@@ -424,6 +425,7 @@ if __name__ == "__main__":
     with open(selection_filename, "r") as f:
         selection = json.load(f)
     d.set_selection(selection["selection"], selection["fixed"])
+
     d.calculate_laplacian_matrix()
     d.precompute_p_i()
     print("Precomputation time ", time.time() - t)
