@@ -1,13 +1,10 @@
 import time
 import sys
-import os
 import numpy as np
-import math
 import face
 import offfile
 import othermath as omath
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 
 np.set_printoptions(precision=2, suppress=True)
 
