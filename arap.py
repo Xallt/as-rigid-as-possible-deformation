@@ -124,8 +124,8 @@ class Deformer:
 
     def build_weight_matrix(self):
         print("Generating Weight Matrix")
-        self.weight_matrix = matrix((self.n, self.n), dtype=np.float)
-        self.weight_sum = matrix((self.n, self.n), dtype=np.float)
+        self.weight_matrix = matrix((self.n, self.n), dtype=np.float32)
+        self.weight_sum = matrix((self.n, self.n), dtype=np.float32)
 
         for vertex_id in range(self.n):
             neighbours = self.neighbours_of(vertex_id)
@@ -175,7 +175,7 @@ class Deformer:
         fixed_verts_num = len(self.fixed_verts)
         # for each constrained point, add a new row and col
         new_n = self.n + fixed_verts_num
-        new_matrix = matrix((new_n, new_n), dtype=np.float)
+        new_matrix = matrix((new_n, new_n), dtype=np.float32)
         # Assign old values to new matrix
         new_matrix[: self.n, : self.n] = self.laplacian_matrix
         # Add 1s in the row and column associated with the fixed point to constain it
