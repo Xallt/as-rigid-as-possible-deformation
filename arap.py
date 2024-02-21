@@ -6,6 +6,7 @@ import argparse
 import othermath as omath
 import matplotlib.pyplot as plt
 import json
+from tqdm.auto import tqdm
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -227,13 +228,15 @@ class Deformer:
             self.b_array[self.n + i] = self.fixed_verts[i][1]
 
         # Apply following deformation iterations
-        for t in range(iterations):
-            print("Iteration: ", t)
+        pbar = tqdm(range(iterations))
+        for t in pbar:
+            # print("Iteration: ", t)
 
             self.calculate_cell_rotations()
             self.apply_cell_rotations()
             iteration_energy = self.calculate_energy()
-            print("Total Energy: ", self.current_energy)
+            pbar.set_description(f"Energy: {self.current_energy:.2f}")
+            # print("Total Energy: ", self.current_energy)
             # if(self.energy_minimized(iteration_energy)):
             #     print("Energy was minimized at iteration", t, " with an energy of ", iteration_energy)
             #     break
@@ -243,7 +246,7 @@ class Deformer:
         return abs(self.current_energy - iteration_energy) < self.threshold
 
     def calculate_cell_rotations(self):
-        print("Calculating Cell Rotations")
+        # print("Calculating Cell Rotations")
         for vert_id in range(self.n):
             rotation = self.calculate_rotation_matrix_for_cell(vert_id)
             self.cell_rotations[vert_id] = rotation
@@ -268,14 +271,14 @@ class Deformer:
             self.P_i_array.append(P_i)
 
     def apply_cell_rotations(self):
-        print("Applying Cell Rotations")
+        # print("Applying Cell Rotations")
 
         # Regular b points
         for i in range(self.n):
             self.b_array[i] = self.calculate_b_for(i)
 
-        print("Printing B")
-        print(self.b_array)
+        # print("Printing B")
+        # print(self.b_array)
 
         p_prime = solve(self.laplacian_matrix, self.b_array)
 
