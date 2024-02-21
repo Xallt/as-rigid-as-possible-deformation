@@ -393,9 +393,8 @@ if __name__ == "__main__":
     d = Deformer(filename)
     d.read_file()
     d.build_weight_matrix()
-    if len(selection_filename) > 0:
-        d.read_deformation_file(deformation_file)
-        d.read_selection_file(selection_filename)
+    d.read_deformation_file(deformation_file)
+    d.read_selection_file(selection_filename)
     d.calculate_laplacian_matrix()
     d.precompute_p_i()
     print("Precomputation time ", time.time() - t)
