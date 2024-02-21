@@ -28,22 +28,15 @@ class Deformer:
     max_iterations = 100
     threshold = 0.001
 
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self):
         self.POWER = float("Inf")
 
-        self.read_file()
-        self.build_weight_matrix()
-
-    def read_file(self):
-        # Load the mesh file with trimesh
-        mesh = trimesh.load(self.filename, force="mesh")
-
+    def set_mesh(self, vertices, faces):
         # Initialize object fields
-        self.n = len(mesh.vertices)
-        self.verts = mesh.vertices
-        self.verts_prime = np.array(mesh.vertices)  # Copy vertices as verts_prime
-        self.faces = mesh.faces
+        self.n = len(vertices)
+        self.verts = vertices
+        self.verts_prime = np.array(vertices)  # Copy vertices as verts_prime
+        self.faces = faces
 
         # Initialize verts_to_face
         self.verts_to_face = [[] for _ in range(self.n)]
@@ -76,6 +69,8 @@ class Deformer:
         print(f"{len(self.verts)} vertices")
         print(f"{len(self.faces)} faces")
         print(f"{np.sum(self.neighbour_matrix) // 2} edges")  # Assuming undirected edges
+
+        self.build_weight_matrix()
 
     def assign_values_to_neighbour_matrix(self, v1, v2, v3):
         self.neighbour_matrix[v1, v2] = 1
@@ -399,7 +394,11 @@ if __name__ == "__main__":
 
     t = time.time()
 
-    d = Deformer(filename)
+    d = Deformer()
+
+    mesh = trimesh.load_mesh(filename)
+
+    d.set_mesh(mesh.vertices, mesh.faces)
 
     deformation_matrix = np.load(deformation_file)
     d.set_deformation(deformation_matrix)

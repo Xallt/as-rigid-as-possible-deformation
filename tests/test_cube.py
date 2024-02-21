@@ -7,7 +7,10 @@ import trimesh
 
 class TestCube(unittest.TestCase):
     def test_cube(self):
-        d = Deformer("tests/cube3.obj")
+        mesh = trimesh.load("tests/cube3.obj")
+
+        d = Deformer()
+        d.set_mesh(mesh.vertices, mesh.faces)
         deformation_matrix = np.load("tests/t2.npy")
         d.set_deformation(deformation_matrix)
 
