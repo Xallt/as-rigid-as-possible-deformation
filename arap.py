@@ -311,15 +311,13 @@ class Deformer:
         neighbour_ids = self.neighbours_of(vert_id)
         degree = len(neighbour_ids)
 
-        D_i = np.zeros((degree, degree))
+        D_i = np.diag(self.weight_matrix[vert_id, neighbour_ids])
 
         P_i = self.P_i_array[vert_id]
         P_i_prime = np.zeros((3, degree))
 
         for n_i in range(degree):
             n_id = neighbour_ids[n_i]
-
-            D_i[n_i, n_i] = self.weight_matrix[vert_id, n_id]
 
             vert_j_prime = self.verts_prime[n_id]
             P_i_prime[:, n_i] = vert_i_prime - vert_j_prime
