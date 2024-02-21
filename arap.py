@@ -8,6 +8,7 @@ import offfile
 import othermath as omath
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+
 np.set_printoptions(precision=2, suppress=True)
 
 SPARSE = False
@@ -16,28 +17,30 @@ if SPARSE:
     import scipy.sparse
     import scipy.sparse.linalg
 
-    solve   = scipy.sparse.linalg.spsolve
-    matrix  = scipy.sparse.lil_matrix
+    solve = scipy.sparse.linalg.spsolve
+    matrix = scipy.sparse.lil_matrix
 else:
-    solve   = np.linalg.solve
-    matrix  = np.zeros
+    solve = np.linalg.solve
+    matrix = np.zeros
+
 
 # Read file into arrays
 class Deformer:
     max_iterations = 100
     threshold = 0.001
+
     def __init__(self, filename):
         self.filename = filename
-        self.POWER = float('Inf')
+        self.POWER = float("Inf")
 
     def read_file(self):
         fr = offfile.OffFile(self.filename)
 
         first_line = fr.nextLine().split()
 
-        number_of_verticies =   int(first_line[0])
-        number_of_faces =       int(first_line[1])
-        number_of_edges =       int(first_line[2])
+        number_of_verticies = int(first_line[0])
+        number_of_faces = int(first_line[1])
+        number_of_edges = int(first_line[2])
 
         self.n = number_of_verticies
 
@@ -88,7 +91,7 @@ class Deformer:
         print(str(len(self.faces)) + " faces")
         print(str(number_of_edges) + " edges")
 
-    def assign_values_to_neighbour_matrix(self, v1, v2 ,v3):
+    def assign_values_to_neighbour_matrix(self, v1, v2, v3):
         self.neighbour_matrix[v1, v2] = 1
         self.neighbour_matrix[v2, v1] = 1
         self.neighbour_matrix[v1, v3] = 1
@@ -100,7 +103,7 @@ class Deformer:
     def read_selection_file(self, filename):
         # The selection status of each vertex, where 0=fixed, 1=deformable-region, 2=handle
 
-        self.vert_status = open(filename, 'r').read().strip().split("\n")
+        self.vert_status = open(filename, "r").read().strip().split("\n")
         # Remove any lines that aren't numbers
         self.vert_status = [int(line) for line in self.vert_status if omath.string_is_int(line)]
 
@@ -110,29 +113,31 @@ class Deformer:
         for i in range(self.n):
             if self.vert_status[i] == 2:
                 self.selected_verts.append(i)
-                self.fixed_verts.append((i, omath.apply_rotation(self.deformation_matrix, self.verts[i])))
+                self.fixed_verts.append(
+                    (i, omath.apply_rotation(self.deformation_matrix, self.verts[i]))
+                )
             elif self.vert_status[i] == 0:
                 self.fixed_verts.append((i, self.verts[i]))
-        assert(len(self.vert_status) == len(self.verts))
+        assert len(self.vert_status) == len(self.verts)
 
     # Reads the .def file and stores the inner matrix
     def read_deformation_file(self, filename):
-        def_file_lines = open(filename, 'r').read().strip().split("\n")
+        def_file_lines = open(filename, "r").read().strip().split("\n")
         # Remove any lines with comments
         def_file_lines = [line for line in def_file_lines if "#" not in line]
 
         # Assert its at least a 4 by something matrix just in case
-        assert(len(def_file_lines) == 4)
+        assert len(def_file_lines) == 4
         self.deformation_matrix = np.matrix(";".join(def_file_lines))
         print("Deformation matrix to apply")
         print(self.deformation_matrix)
-        assert(self.deformation_matrix.size == 16)
+        assert self.deformation_matrix.size == 16
 
     # Returns a set of IDs that are neighbours to this vertexID (not including the input ID)
     def neighbours_of(self, vert_id):
         neighbours = []
         for n_id in range(self.n):
-            if(self.neighbour_matrix[vert_id, n_id] == 1):
+            if self.neighbour_matrix[vert_id, n_id] == 1:
                 neighbours.append(n_id)
         return neighbours
 
@@ -148,7 +153,7 @@ class Deformer:
         print(self.weight_matrix)
 
     def assign_weight_for_pair(self, i, j):
-        if(self.weight_matrix[j, i] == 0):
+        if self.weight_matrix[j, i] == 0:
             # If the opposite weight has not been computed, do so
             weightIJ = self.weight_for_pair(i, j)
         else:
@@ -167,7 +172,7 @@ class Deformer:
                 local_faces.append(face)
 
         # Either a normal face or a boundry edge, otherwise bad mesh
-        assert(len(local_faces) <= 2)
+        assert len(local_faces) <= 2
 
         vertex_i = self.verts[i]
         vertex_j = self.verts[j]
@@ -191,7 +196,7 @@ class Deformer:
         new_n = self.n + fixed_verts_num
         new_matrix = matrix((new_n, new_n), dtype=np.float)
         # Assign old values to new matrix
-        new_matrix[:self.n, :self.n] = self.laplacian_matrix
+        new_matrix[: self.n, : self.n] = self.laplacian_matrix
         # Add 1s in the row and column associated with the fixed point to constain it
         # This will increase L by the size of fixed_verts
         for i in range(fixed_verts_num):
@@ -215,7 +220,7 @@ class Deformer:
         number_of_fixed_verts = len(self.fixed_verts)
 
         self.b_array = np.zeros((self.n + number_of_fixed_verts, 3))
-         # Constraint b points
+        # Constraint b points
         for i in range(number_of_fixed_verts):
             self.b_array[self.n + i] = self.fixed_verts[i][1]
 
@@ -233,7 +238,7 @@ class Deformer:
             self.current_energy = iteration_energy
 
     def energy_minimized(self, iteration_energy):
-        return abs(self.current_energy - iteration_energy)  < self.threshold
+        return abs(self.current_energy - iteration_energy) < self.threshold
 
     def calculate_cell_rotations(self):
         print("Calculating Cell Rotations")
@@ -257,7 +262,7 @@ class Deformer:
                 n_id = neighbour_ids[n_i]
 
                 vert_j = self.verts[n_id]
-                P_i[:, n_i] = (vert_i - vert_j)
+                P_i[:, n_i] = vert_i - vert_j
             self.P_i_array.append(P_i)
 
     def apply_cell_rotations(self):
@@ -288,7 +293,6 @@ class Deformer:
         # U, s, V_transpose
         # V_transpose_transpose * U_transpose
 
-
         rotation = V_transpose.transpose().dot(U.transpose())
         if np.linalg.det(rotation) <= 0:
             U[:0] *= -1
@@ -304,7 +308,7 @@ class Deformer:
 
         D_i = np.zeros((number_of_neighbours, number_of_neighbours))
 
-        P_i =       self.P_i_array[vert_id]
+        P_i = self.P_i_array[vert_id]
         P_i_prime = np.zeros((3, number_of_neighbours))
 
         for n_i in range(number_of_neighbours):
@@ -313,14 +317,14 @@ class Deformer:
             D_i[n_i, n_i] = self.weight_matrix[vert_id, n_id]
 
             vert_j_prime = self.verts_prime[n_id]
-            P_i_prime[:, n_i] = (vert_i_prime - vert_j_prime)
+            P_i_prime[:, n_i] = vert_i_prime - vert_j_prime
 
         P_i_prime = P_i_prime.transpose()
         return P_i.dot(D_i).dot(P_i_prime)
 
     def output_s_prime_to_file(self):
         print("Writing to `output.off`")
-        f = open('output.off', 'w')
+        f = open("output.off", "w")
         f.write("OFF\n")
         f.write(str(self.n) + " " + str(len(self.faces)) + " 0\n")
         for vert in self.verts_prime:
@@ -340,7 +344,7 @@ class Deformer:
             r_ij = self.cell_rotations[i] + self.cell_rotations[j]
             # print(r_ij)
             p_ij = self.verts[i] - self.verts[j]
-            b += (w_ij * r_ij.dot(p_ij))
+            b += w_ij * r_ij.dot(p_ij)
         return b
 
     def calculate_energy(self):
@@ -358,7 +362,7 @@ class Deformer:
             e_ij = self.verts[i] - self.verts[j]
             r_i = self.cell_rotations[i]
             value = e_ij_prime - r_i.dot(e_ij)
-            if(self.POWER == float('Inf')):
+            if self.POWER == float("Inf"):
                 norm_power = omath.inf_norm(value)
             else:
                 norm_power = np.power(value, self.POWER)
@@ -379,13 +383,13 @@ class Deformer:
         return "#" + red + "00" + blue
 
     def hex_color_array(self):
-        energies = [ self.energy_of_cell(i) for i in range(self.n) ]
+        energies = [self.energy_of_cell(i) for i in range(self.n)]
         max_value = np.amax(energies)
-        return [ self.hex_color_for_energy(energy, max_value) for energy in energies ]
+        return [self.hex_color_for_energy(energy, max_value) for energy in energies]
 
     def show_graph(self):
         fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111, projection="3d")
         xs = np.squeeze(np.asarray(self.verts_prime[:, 0]))
         ys = np.squeeze(np.asarray(self.verts_prime[:, 1]))
         zs = np.squeeze(np.asarray(self.verts_prime[:, 2]))
@@ -393,38 +397,41 @@ class Deformer:
         # Axes3D.scatter(xs, ys, zs=zs, zdir='z', s=1)#, c=None, depthshade=True, *args, **kwargs)
         ax.scatter(xs, ys, zs, c=color)
         plt.show()
-# MAIN
-t = time.time()
-filename            = "data/02-bar-twist/00-bar-original.off"
-selection_filename  = "data/02-bar-twist/bar.sel"
-deformation_file    = "data/02-bar-twist/bar.def"
-iterations = -1
-argc = len(sys.argv)
 
-if(argc > 1):
-    filename = sys.argv[1]
-    selection_filename = ""
-    deformation_file = ""
-if(argc > 2):
-    selection_filename = sys.argv[2]
-    deformation_file = ""
-if(argc > 3):
-    deformation_file = sys.argv[3]
-if(argc > 4):
-    iterations = int(sys.argv[4])
 
-d = Deformer(filename)
-d.read_file()
-d.build_weight_matrix()
-if len(selection_filename) > 0:
-    d.read_deformation_file(deformation_file)
-    d.read_selection_file(selection_filename)
-d.calculate_laplacian_matrix()
-d.precompute_p_i()
-print("Precomputation time ", time.time() - t)
-t = time.time()
-d.apply_deformation(iterations)
-print("Total iteration time", time.time() - t)
-d.output_s_prime_to_file()
-d.show_graph()
-# os.system("say complete")
+if __name__ == "__main__":
+    # MAIN
+    t = time.time()
+    filename = "data/02-bar-twist/00-bar-original.off"
+    selection_filename = "data/02-bar-twist/bar.sel"
+    deformation_file = "data/02-bar-twist/bar.def"
+    iterations = -1
+    argc = len(sys.argv)
+
+    if argc > 1:
+        filename = sys.argv[1]
+        selection_filename = ""
+        deformation_file = ""
+    if argc > 2:
+        selection_filename = sys.argv[2]
+        deformation_file = ""
+    if argc > 3:
+        deformation_file = sys.argv[3]
+    if argc > 4:
+        iterations = int(sys.argv[4])
+
+    d = Deformer(filename)
+    d.read_file()
+    d.build_weight_matrix()
+    if len(selection_filename) > 0:
+        d.read_deformation_file(deformation_file)
+        d.read_selection_file(selection_filename)
+    d.calculate_laplacian_matrix()
+    d.precompute_p_i()
+    print("Precomputation time ", time.time() - t)
+    t = time.time()
+    d.apply_deformation(iterations)
+    print("Total iteration time", time.time() - t)
+    d.output_s_prime_to_file()
+    d.show_graph()
+    # os.system("say complete")
