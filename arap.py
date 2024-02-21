@@ -5,6 +5,7 @@ import face_utils
 import argparse
 import othermath as omath
 import matplotlib.pyplot as plt
+import json
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -80,6 +81,20 @@ class Deformer:
         self.neighbour_matrix[v2, v3] = 1
         self.neighbour_matrix[v3, v2] = 1
 
+    def set_selection(self, selection_ids, fixed_ids):
+        self.vert_status = [1] * self.n
+        self.fixed_verts = []
+        self.selected_verts = []
+        for i in selection_ids:
+            self.vert_status[i] = 2
+            self.selected_verts.append(i)
+            self.fixed_verts.append(
+                (i, omath.apply_rotation(self.deformation_matrix, self.verts[i]))
+            )
+        for i in fixed_ids:
+            self.vert_status[i] = 0
+            self.fixed_verts.append((i, self.verts[i]))
+
     # Reads the .sel file and keeps track of the selection status of a vertex
     def read_selection_file(self, filename):
         # The selection status of each vertex, where 0=fixed, 1=deformable-region, 2=handle
@@ -100,6 +115,9 @@ class Deformer:
             elif self.vert_status[i] == 0:
                 self.fixed_verts.append((i, self.verts[i]))
         assert len(self.vert_status) == len(self.verts)
+
+    def set_deformation(self, deformation_matrix):
+        self.deformation_matrix = deformation_matrix
 
     # Reads the .def file and stores the inner matrix
     def read_deformation_file(self, filename):
@@ -376,7 +394,13 @@ if __name__ == "__main__":
 
     parser.add_argument("--filename", "-f", type=str, help="The .off file to deform", required=True)
     parser.add_argument("--selection", "-s", type=str, help="The .sel file to use", required=True)
-    parser.add_argument("--deformation", "-d", type=str, help="The .def file to use", required=True)
+    parser.add_argument(
+        "--deformation",
+        "-d",
+        type=str,
+        help="The .npy file with the 4x4 deformation matrix",
+        required=True,
+    )
     parser.add_argument(
         "--iterations", "-i", type=int, help="The number of iterations to run", default=-1
     )
@@ -393,8 +417,13 @@ if __name__ == "__main__":
     d = Deformer(filename)
     d.read_file()
     d.build_weight_matrix()
-    d.read_deformation_file(deformation_file)
-    d.read_selection_file(selection_filename)
+
+    deformation_matrix = np.load(deformation_file)
+    d.set_deformation(deformation_matrix)
+
+    with open(selection_filename, "r") as f:
+        selection = json.load(f)
+    d.set_selection(selection["selection"], selection["fixed"])
     d.calculate_laplacian_matrix()
     d.precompute_p_i()
     print("Precomputation time ", time.time() - t)
