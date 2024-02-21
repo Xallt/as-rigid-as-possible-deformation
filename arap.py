@@ -273,18 +273,7 @@ class Deformer:
         for i in range(self.n):
             self.b_array[i] = self.calculate_b_for(i)
 
-        # print("Printing B")
-        # print(self.b_array)
-
-        p_prime = solve(self.laplacian_matrix, self.b_array)
-
-        # self.verts = self.verts_prime
-
-        for i in range(self.n):
-            self.verts_prime[i] = p_prime[i]
-
-        # print("p prime")
-        # print(p_prime)
+        self.verts_prime = solve(self.laplacian_matrix, self.b_array)[: self.n]
 
     def calculate_rotation_matrix_for_cell(self, vert_id):
         covariance_matrix = self.calculate_covariance_matrix_for_cell(vert_id)
