@@ -1,9 +1,8 @@
 import time
-import sys
+import trimesh
 import numpy as np
-import face
+import face_utils
 import argparse
-import offfile
 import othermath as omath
 import matplotlib.pyplot as plt
 
@@ -32,62 +31,46 @@ class Deformer:
         self.POWER = float("Inf")
 
     def read_file(self):
-        fr = offfile.OffFile(self.filename)
+        # Load the mesh file with trimesh
+        mesh = trimesh.load(self.filename, force="mesh")
 
-        first_line = fr.nextLine().split()
+        # Initialize object fields
+        self.n = len(mesh.vertices)
+        self.verts = mesh.vertices
+        self.verts_prime = np.array(mesh.vertices)  # Copy vertices as verts_prime
+        self.faces = mesh.faces
 
-        number_of_verticies = int(first_line[0])
-        number_of_faces = int(first_line[1])
-        number_of_edges = int(first_line[2])
+        # Initialize verts_to_face
+        self.verts_to_face = [[] for _ in range(self.n)]
+        for i, face in enumerate(self.faces):
+            for vert_id in face:
+                self.verts_to_face[vert_id].append(i)
 
-        self.n = number_of_verticies
-
-        # Every vertex in the .off
-        self.verts = []
-        self.verts_prime = []
-        # Every face in the .off
-        self.faces = []
-        # The ID of the faces related to this vertx ID (i.e. vtf[i] contains faces that contain ID i)
-        self.verts_to_face = []
-
-        for i in range(self.n):
-            vert_line = fr.nextLine().split()
-            x = float(vert_line[0])
-            y = float(vert_line[1])
-            z = float(vert_line[2])
-            self.verts.append(np.array([x, y, z]))
-            self.verts_prime.append(np.array([x, y, z]))
-
-            self.verts_to_face.append([])
-        self.verts_prime = np.asmatrix(self.verts_prime)
+        # Neighbour matrix and edge matrix calculations
         self.neighbour_matrix = np.zeros((self.n, self.n))
-
-        print("Generating Adjacencies")
-        for i in range(number_of_faces):
-            face_line = fr.nextLine().split()
-            v1_id = int(face_line[1])
-            v2_id = int(face_line[2])
-            v3_id = int(face_line[3])
-            self.faces.append(face.Face(v1_id, v2_id, v3_id))
-            # Add this face to each vertex face map
-            self.assign_values_to_neighbour_matrix(v1_id, v2_id, v3_id)
-            self.verts_to_face[v1_id].append(i)
-            self.verts_to_face[v2_id].append(i)
-            self.verts_to_face[v3_id].append(i)
+        for face in self.faces:
+            for i in range(3):
+                for j in range(i + 1, 3):
+                    self.neighbour_matrix[face[i], face[j]] = 1
+                    self.neighbour_matrix[face[j], face[i]] = 1
 
         print("Generating Edge Matrix")
         self.edge_matrix = np.zeros((self.n, self.n))
-
         for row in range(self.n):
-            self.edge_matrix[row][row] = self.neighbour_matrix[row].sum()
-        print("Generating Laplacian Matrix")
+            self.edge_matrix[row][row] = np.sum(self.neighbour_matrix[row])
 
-        # N size array of 3x3 matricies
+        print("Generating Laplacian Matrix")
+        # Assuming you're calculating the Laplacian matrix; replace with your method
+        self.laplacian_matrix = (
+            np.diag(np.sum(self.neighbour_matrix, axis=1)) - self.neighbour_matrix
+        )
+
+        # N size array of 3x3 matrices for cell rotations
         self.cell_rotations = np.zeros((self.n, 3, 3))
 
-        print(str(len(self.verts)) + " verticies")
-        print(str(len(self.faces)) + " faces")
-        print(str(number_of_edges) + " edges")
+        print(f"{len(self.verts)} vertices")
+        print(f"{len(self.faces)} faces")
+        print(f"{np.sum(self.neighbour_matrix) // 2} edges")  # Assuming undirected edges
 
     def assign_values_to_neighbour_matrix(self, v1, v2, v3):
         self.neighbour_matrix[v1, v2] = 1
@@ -166,7 +149,7 @@ class Deformer:
         for f_id in self.verts_to_face[i]:
             face = self.faces[f_id]
             # If the face contains both I and J, add it
-            if face.contains_point_ids(i, j):
+            if i in face and j in face:
                 local_faces.append(face)
 
         # Either a normal face or a boundry edge, otherwise bad mesh
@@ -179,7 +162,7 @@ class Deformer:
 
         cot_theta_sum = 0
         for face in local_faces:
-            other_vertex_id = face.other_point(i, j)
+            other_vertex_id = face_utils.other_point(face, i, j)
             vertex_o = self.verts[other_vertex_id]
             theta = omath.angle_between(vertex_i - vertex_o, vertex_j - vertex_o)
             cot_theta_sum += omath.cot(theta)
@@ -321,18 +304,9 @@ class Deformer:
         return P_i.dot(D_i).dot(P_i_prime)
 
     def output_s_prime_to_file(self):
-        print("Writing to `output.off`")
-        f = open("output.off", "w")
-        f.write("OFF\n")
-        f.write(str(self.n) + " " + str(len(self.faces)) + " 0\n")
-        for vert in self.verts_prime:
-            for i in np.nditer(vert):
-                f.write(str(i) + " ")
-            f.write("\n")
-        for face in self.faces:
-            f.write(face.off_string() + "\n")
-        f.close()
-        print("Output file to `output.off`")
+        # Write self.vers_prime and self.faces to a file
+        mesh = trimesh.Trimesh(self.verts_prime, self.faces)
+        mesh.export("output.off")
 
     def calculate_b_for(self, i):
         b = np.zeros((1, 3))
