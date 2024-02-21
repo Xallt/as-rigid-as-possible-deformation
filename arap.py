@@ -30,6 +30,7 @@ class Deformer:
 
     def __init__(self):
         self.POWER = float("Inf")
+        self.stop_flag = False
 
     def set_mesh(self, vertices, faces):
         # Initialize object fields
@@ -79,6 +80,9 @@ class Deformer:
         self.neighbour_matrix[v3, v1] = 1
         self.neighbour_matrix[v2, v3] = 1
         self.neighbour_matrix[v3, v2] = 1
+
+    def reset(self):
+        self.verts_prime = self.verts.copy()
 
     def set_selection(self, selection_ids, fixed_ids):
         self.vert_status = [1] * self.n
@@ -202,6 +206,9 @@ class Deformer:
 
         self.laplacian_matrix = new_matrix
 
+    def stop(self):
+        self.stop_flag = True
+
     def apply_deformation(self, iterations):
         self.precompute_p_i()
         self.calculate_laplacian_matrix()
@@ -223,6 +230,9 @@ class Deformer:
         # Apply following deformation iterations
         pbar = tqdm(range(iterations))
         for t in pbar:
+            if self.stop_flag:
+                self.stop_flag = False
+                break
             # print("Iteration: ", t)
 
             self.calculate_cell_rotations()
