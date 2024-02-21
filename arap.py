@@ -374,9 +374,9 @@ class Deformer:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Deform a mesh using ARAP")
 
-    parser.add_argument("--filename", "-f", type=str, help="The .off file to deform")
-    parser.add_argument("--selection", "-s", type=str, help="The .sel file to use")
-    parser.add_argument("--deformation", "-d", type=str, help="The .def file to use")
+    parser.add_argument("--filename", "-f", type=str, help="The .off file to deform", required=True)
+    parser.add_argument("--selection", "-s", type=str, help="The .sel file to use", required=True)
+    parser.add_argument("--deformation", "-d", type=str, help="The .def file to use", required=True)
     parser.add_argument(
         "--iterations", "-i", type=int, help="The number of iterations to run", default=-1
     )
