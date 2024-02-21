@@ -2,6 +2,7 @@ import time
 import sys
 import numpy as np
 import face
+import argparse
 import offfile
 import othermath as omath
 import matplotlib.pyplot as plt
@@ -397,25 +398,23 @@ class Deformer:
 
 
 if __name__ == "__main__":
-    # MAIN
-    t = time.time()
-    filename = "data/02-bar-twist/00-bar-original.off"
-    selection_filename = "data/02-bar-twist/bar.sel"
-    deformation_file = "data/02-bar-twist/bar.def"
-    iterations = -1
-    argc = len(sys.argv)
+    parser = argparse.ArgumentParser(description="Deform a mesh using ARAP")
 
-    if argc > 1:
-        filename = sys.argv[1]
-        selection_filename = ""
-        deformation_file = ""
-    if argc > 2:
-        selection_filename = sys.argv[2]
-        deformation_file = ""
-    if argc > 3:
-        deformation_file = sys.argv[3]
-    if argc > 4:
-        iterations = int(sys.argv[4])
+    parser.add_argument("--filename", "-f", type=str, help="The .off file to deform")
+    parser.add_argument("--selection", "-s", type=str, help="The .sel file to use")
+    parser.add_argument("--deformation", "-d", type=str, help="The .def file to use")
+    parser.add_argument(
+        "--iterations", "-i", type=int, help="The number of iterations to run", default=-1
+    )
+
+    args = parser.parse_args()
+
+    filename = args.filename
+    selection_filename = args.selection
+    deformation_file = args.deformation
+    iterations = args.iterations
+
+    t = time.time()
 
     d = Deformer(filename)
     d.read_file()
@@ -431,4 +430,3 @@ if __name__ == "__main__":
     print("Total iteration time", time.time() - t)
     d.output_s_prime_to_file()
     d.show_graph()
-    # os.system("say complete")
