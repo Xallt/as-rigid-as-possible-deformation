@@ -208,6 +208,8 @@ class Deformer:
         self.laplacian_matrix = new_matrix
 
     def apply_deformation(self, iterations):
+        self.precompute_p_i()
+        self.calculate_laplacian_matrix()
         print("Length of sel verts", len(self.selected_verts))
 
         if iterations < 0:
@@ -406,11 +408,11 @@ if __name__ == "__main__":
         selection = json.load(f)
     d.set_selection(selection["selection"], selection["fixed"])
 
-    d.calculate_laplacian_matrix()
-    d.precompute_p_i()
     print("Precomputation time ", time.time() - t)
     t = time.time()
     d.apply_deformation(iterations)
     print("Total iteration time", time.time() - t)
     d.output_s_prime_to_file()
     d.show_graph()
+
+    print(d.vert_status)
