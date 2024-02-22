@@ -11,6 +11,10 @@ class TestCube(unittest.TestCase):
 
         d = Deformer()
         d.set_mesh(mesh.vertices, mesh.faces)
+        weight_matrix_gt = np.load("tests/cube_wm.npy")
+        self.assertTrue(
+            np.allclose(d.weight_matrix, weight_matrix_gt, atol=1e-3), "Weight matrix is not equal"
+        )
         deformation_matrix = np.load("tests/t2.npy")
         d.set_deformation(deformation_matrix)
 
