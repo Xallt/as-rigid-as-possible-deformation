@@ -7,6 +7,8 @@ import othermath as omath
 import matplotlib.pyplot as plt
 import json
 from tqdm.auto import tqdm
+import torch
+import dgl
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -33,45 +35,54 @@ class Deformer:
         self.stop_flag = False
 
     def set_mesh(self, vertices, faces):
-        # Initialize object fields
         self.n = len(vertices)
-        self.verts = vertices
-        self.verts_prime = np.array(vertices)  # Copy vertices as verts_prime
+        self.vertices = vertices
         self.faces = faces
+        edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [0, 2]]), axis=0)
+        edges = np.concatenate((edges, np.flip(edges, axis=1)), axis=0)
+        edges = np.unique(edges, axis=0).tolist()
 
-        # Initialize verts_to_face
-        self.verts_to_face = [[] for _ in range(self.n)]
-        for i, face in enumerate(self.faces):
-            for vert_id in face:
-                self.verts_to_face[vert_id].append(i)
+        self.graph = dgl.graph(edges)
+        self.graph.ndata["id"] = torch.arange(len(self.vertices))
+        self.graph.ndata["verts"] = torch.from_numpy(vertices).to(torch.float32)
+        self.graph.ndata["verts_prime"] = torch.from_numpy(vertices).to(torch.float32)
 
-        # Neighbour matrix and edge matrix calculations
-        self.neighbour_matrix = np.zeros((self.n, self.n))
-        for face in self.faces:
-            for i in range(3):
-                for j in range(i + 1, 3):
-                    self.neighbour_matrix[face[i], face[j]] = 1
-                    self.neighbour_matrix[face[j], face[i]] = 1
+        self.cell_rotations = torch.zeros((self.n, 3, 3))
 
-        print("Generating Edge Matrix")
-        self.edge_matrix = np.zeros((self.n, self.n))
-        for row in range(self.n):
-            self.edge_matrix[row][row] = np.sum(self.neighbour_matrix[row])
+        def weight_matrix(edges):
+            src_id, dst_id = edges.src["id"].numpy(), edges.dst["id"].numpy()
+            data = {"w": torch.tensor([self.weight_for_pair(i, j) for i, j in zip(src_id, dst_id)])}
+            return data
 
-        print("Generating Laplacian Matrix")
-        # Assuming you're calculating the Laplacian matrix; replace with your method
-        self.laplacian_matrix = (
-            np.diag(np.sum(self.neighbour_matrix, axis=1)) - self.neighbour_matrix
-        )
+        self.graph.apply_edges(weight_matrix)
 
-        # N size array of 3x3 matrices for cell rotations
-        self.cell_rotations = np.zeros((self.n, 3, 3))
+        def weight_sum(node):
+            return {"w_sum": torch.sum(node.mailbox["w"], 1)}
 
-        print(f"{len(self.verts)} vertices")
-        print(f"{len(self.faces)} faces")
-        print(f"{np.sum(self.neighbour_matrix) // 2} edges")  # Assuming undirected edges
+        self.graph.update_all(dgl.function.copy_e("w", "w"), weight_sum)
 
-        self.build_weight_matrix()
+        print(self.graph.ndata["w_sum"])
+
+    def faces_for_edge(self, i, j):
+        return [f for f in self.faces if i in f and j in f]
+
+    def weight_for_pair(self, i, j):
+        local_faces = self.faces_for_edge(i, j)
+        # Either a normal face or a boundry edge, otherwise bad mesh
+        assert len(local_faces) <= 2
+
+        vertex_i = self.graph.ndata["verts"][i]
+        vertex_j = self.graph.ndata["verts"][j]
+
+        # weight equation: 0.5 * (cot(alpha) + cot(beta))
+
+        cot_theta_sum = 0
+        for face in local_faces:
+            other_vertex_id = face_utils.other_point(face, i, j)
+            vertex_o = self.graph.ndata["verts"][other_vertex_id]
+            theta = omath.angle_between(vertex_i - vertex_o, vertex_j - vertex_o)
+            cot_theta_sum += omath.cot(theta)
+        return cot_theta_sum * 0.5
 
     def assign_values_to_neighbour_matrix(self, v1, v2, v3):
         self.neighbour_matrix[v1, v2] = 1
@@ -82,7 +93,7 @@ class Deformer:
         self.neighbour_matrix[v3, v2] = 1
 
     def reset(self):
-        self.verts_prime = self.verts.copy()
+        self.graph.ndata["verts_prime"] = self.graph.ndata["verts"].copy()
 
     def set_selection(self, selection_ids, fixed_ids):
         self.vert_status = [1] * self.n
@@ -92,11 +103,11 @@ class Deformer:
             self.vert_status[i] = 2
             self.selected_verts.append(i)
             self.fixed_verts.append(
-                (i, omath.apply_rotation(self.deformation_matrix, self.verts[i]))
+                (i, omath.apply_rotation(self.deformation_matrix, self.graph.ndata["verts"][i]))
             )
         for i in fixed_ids:
             self.vert_status[i] = 0
-            self.fixed_verts.append((i, self.verts[i]))
+            self.fixed_verts.append((i, self.graph.ndata["verts"][i]))
 
     # Reads the .sel file and keeps track of the selection status of a vertex
     def read_selection_file(self, filename):
@@ -113,11 +124,11 @@ class Deformer:
             if self.vert_status[i] == 2:
                 self.selected_verts.append(i)
                 self.fixed_verts.append(
-                    (i, omath.apply_rotation(self.deformation_matrix, self.verts[i]))
+                    (i, omath.apply_rotation(self.deformation_matrix, self.graph.ndata["verts"][i]))
                 )
             elif self.vert_status[i] == 0:
-                self.fixed_verts.append((i, self.verts[i]))
-        assert len(self.vert_status) == len(self.verts)
+                self.fixed_verts.append((i, self.graph.ndata["verts"][i]))
+        assert len(self.vert_status) == len(self.graph.ndata["verts"])
 
     def set_deformation(self, deformation_matrix):
         self.deformation_matrix = deformation_matrix
@@ -137,53 +148,20 @@ class Deformer:
 
     # Returns a set of IDs that are neighbours to this vertexID (not including the input ID)
     def neighbours_of(self, vert_id):
-        return np.where(self.neighbour_matrix[vert_id])[0]
+        return self.graph.out_edges(vert_id)[1].numpy()
 
-    def build_weight_matrix(self):
-        print("Generating Weight Matrix")
-        self.weight_matrix = matrix((self.n, self.n), dtype=np.float32)
-        self.weight_sum = matrix((self.n, self.n), dtype=np.float32)
+    @property
+    def weight_matrix(self):
+        w = self.graph.edata["w"]
+        edges = self.graph.adj().indices()
+        weight_matrix = torch.zeros((self.n, self.n))
+        for i in range(len(edges[0])):
+            weight_matrix[edges[0][i], edges[1][i]] = w[i]
+        return weight_matrix
 
-        for vertex_id in range(self.n):
-            neighbours = self.neighbours_of(vertex_id)
-            for neighbour_id in neighbours:
-                self.assign_weight_for_pair(vertex_id, neighbour_id)
-        print(self.weight_matrix)
-
-    def assign_weight_for_pair(self, i, j):
-        if self.weight_matrix[j, i] == 0:
-            # If the opposite weight has not been computed, do so
-            weightIJ = self.weight_for_pair(i, j)
-        else:
-            weightIJ = self.weight_matrix[j, i]
-        self.weight_sum[i, i] += weightIJ * 0.5
-        self.weight_sum[j, j] += weightIJ * 0.5
-        self.weight_matrix[i, j] = weightIJ
-
-    def weight_for_pair(self, i, j):
-        local_faces = []
-        # For every face associated with vert index I,
-        for f_id in self.verts_to_face[i]:
-            face = self.faces[f_id]
-            # If the face contains both I and J, add it
-            if i in face and j in face:
-                local_faces.append(face)
-
-        # Either a normal face or a boundry edge, otherwise bad mesh
-        assert len(local_faces) <= 2
-
-        vertex_i = self.verts[i]
-        vertex_j = self.verts[j]
-
-        # weight equation: 0.5 * (cot(alpha) + cot(beta))
-
-        cot_theta_sum = 0
-        for face in local_faces:
-            other_vertex_id = face_utils.other_point(face, i, j)
-            vertex_o = self.verts[other_vertex_id]
-            theta = omath.angle_between(vertex_i - vertex_o, vertex_j - vertex_o)
-            cot_theta_sum += omath.cot(theta)
-        return cot_theta_sum * 0.5
+    @property
+    def weight_sum(self):
+        return torch.diag(self.graph.ndata["w_sum"])
 
     def calculate_laplacian_matrix(self):
         # initial laplacian
@@ -252,7 +230,7 @@ class Deformer:
         # print("Calculating Cell Rotations")
         for vert_id in range(self.n):
             rotation = self.calculate_rotation_matrix_for_cell(vert_id)
-            self.cell_rotations[vert_id] = rotation
+            self.cell_rotations[vert_id] = torch.from_numpy(rotation).to(torch.float32)
 
     def vert_is_deformable(self, vert_id):
         return self.vert_status[vert_id] == 1
@@ -260,16 +238,16 @@ class Deformer:
     def precompute_p_i(self):
         self.P_i_array = []
         for i in range(self.n):
-            vert_i = self.verts[i]
+            vert_i = self.graph.ndata["verts"][i]
             neighbour_ids = self.neighbours_of(i)
             number_of_neighbours = len(neighbour_ids)
 
-            P_i = np.zeros((3, number_of_neighbours))
+            P_i = torch.zeros((3, number_of_neighbours))
 
             for n_i in range(number_of_neighbours):
                 n_id = neighbour_ids[n_i]
 
-                vert_j = self.verts[n_id]
+                vert_j = self.graph.ndata["verts"][n_id]
                 P_i[:, n_i] = vert_i - vert_j
             self.P_i_array.append(P_i)
 
@@ -280,7 +258,9 @@ class Deformer:
         for i in range(self.n):
             self.b_array[i] = self.calculate_b_for(i)
 
-        self.verts_prime = solve(self.laplacian_matrix, self.b_array)[: self.n]
+        self.graph.ndata["verts_prime"] = torch.from_numpy(
+            solve(self.laplacian_matrix, self.b_array)[: self.n]
+        ).to(torch.float32)
 
     def calculate_rotation_matrix_for_cell(self, vert_id):
         covariance_matrix = self.calculate_covariance_matrix_for_cell(vert_id)
@@ -298,21 +278,23 @@ class Deformer:
 
     def calculate_covariance_matrix_for_cell(self, vert_id):
         # s_i = P_i * D_i * P_i_prime_transpose
-        vert_i_prime = self.verts_prime[vert_id]  # (N, 3)
+        vert_i_prime = self.graph.ndata["verts_prime"][vert_id]  # (N, 3)
 
         neighbour_ids = self.neighbours_of(vert_id)  # (d_i)
 
-        D_i = np.diag(self.weight_matrix[vert_id, neighbour_ids])  # (d_i, d_i)
+        D_i = torch.diag(self.weight_matrix[vert_id, neighbour_ids])  # (d_i, d_i)
 
         P_i = self.P_i_array[vert_id]  # (3, d_i)
-        P_i_prime = vert_i_prime[:, None] - self.verts_prime[neighbour_ids].T  # (3, d_i)
+        P_i_prime = (
+            vert_i_prime[:, None] - self.graph.ndata["verts_prime"][neighbour_ids].T
+        )  # (3, d_i)
 
-        P_i_prime = P_i_prime.transpose()
+        P_i_prime = P_i_prime.T
         return P_i @ D_i @ P_i_prime  # (3, 3)
 
     def output_s_prime_to_file(self):
         # Write self.vers_prime and self.faces to a file
-        mesh = trimesh.Trimesh(self.verts_prime, self.faces)
+        mesh = trimesh.Trimesh(self.graph.ndata["verts_prime"], self.faces)
         mesh.export("output.off")
 
     def calculate_b_for(self, i):
@@ -321,7 +303,7 @@ class Deformer:
         R = self.cell_rotations[neighbours]  # (d_i, 3, 3)
         R_avg = self.cell_rotations[i][None] + R  # (d_i, 3, 3)
         P = self.P_i_array[i].T  # (d_i, 3)
-        b = (np.einsum("ijk,ik->ij", R_avg, P) * self.weight_matrix[i, neighbours][:, None]).sum(
+        b = (torch.einsum("ijk,ik->ij", R_avg, P) * self.weight_matrix[i, neighbours][:, None]).sum(
             axis=0
         ) / 2
 
@@ -338,18 +320,22 @@ class Deformer:
         total_energy = 0
         for j in neighbours:
             w_ij = self.weight_matrix[i, j]
-            e_ij_prime = self.verts_prime[i] - self.verts_prime[j]
-            e_ij = self.verts[i] - self.verts[j]
+            e_ij_prime = self.graph.ndata["verts_prime"][i] - self.graph.ndata["verts_prime"][j]
+            e_ij = self.graph.ndata["verts"][i] - self.graph.ndata["verts"][j]
             r_i = self.cell_rotations[i]
-            value = e_ij_prime - r_i.dot(e_ij)
+            value = e_ij_prime - r_i @ e_ij
             if self.POWER == float("Inf"):
-                norm_power = omath.inf_norm(value)
+                norm_power = torch.max(torch.abs(value))
             else:
                 norm_power = np.power(value, self.POWER)
                 norm_power = np.sum(norm_power)
             # total_energy += w_ij * np.linalg.norm(, ord=self.POWER) ** self.POWER
             total_energy += w_ij * norm_power
         return total_energy
+
+    @property
+    def verts_prime(self):
+        return self.graph.ndata["verts_prime"]
 
     def hex_color_for_energy(self, energy, max_energy):
         relative_energy = (energy / max_energy) * 255
@@ -370,9 +356,9 @@ class Deformer:
     def show_graph(self):
         fig = plt.figure()
         ax = fig.add_subplot(111, projection="3d")
-        xs = np.squeeze(np.asarray(self.verts_prime[:, 0]))
-        ys = np.squeeze(np.asarray(self.verts_prime[:, 1]))
-        zs = np.squeeze(np.asarray(self.verts_prime[:, 2]))
+        xs = np.squeeze(np.asarray(self.graph.ndata["verts_prime"][:, 0]))
+        ys = np.squeeze(np.asarray(self.graph.ndata["verts_prime"][:, 1]))
+        zs = np.squeeze(np.asarray(self.graph.ndata["verts_prime"][:, 2]))
         color = self.hex_color_array()
         # Axes3D.scatter(xs, ys, zs=zs, zdir='z', s=1)#, c=None, depthshade=True, *args, **kwargs)
         ax.scatter(xs, ys, zs, c=color)
