@@ -161,6 +161,7 @@ class Deformer:
         # initial laplacian
         # self.laplacian_matrix = self.edge_matrix - self.neighbour_matrix
         self.laplacian_matrix = self.weight_sum - self.weight_matrix
+        print(self.laplacian_matrix.shape)
         fixed_verts_num = len(self.fixed_verts)
         # for each constrained point, add a new row and col
         new_n = self.n + fixed_verts_num
@@ -220,10 +221,13 @@ class Deformer:
         return abs(self.current_energy - iteration_energy) < self.threshold
 
     def calculate_cell_rotations(self):
-        # print("Calculating Cell Rotations")
-        for vert_id in range(self.n):
-            rotation = self.calculate_rotation_matrix_for_cell(vert_id)
-            self.cell_rotations[vert_id] = rotation
+        def cacl_cell_rotation(nodes):
+            rotations = torch.zeros((len(nodes), 3, 3))
+            for i, node_id in enumerate(nodes.mailbox["id"]):
+                rotations[i] = self.calculate_rotation_matrix_for_cell(node_id[0].item())
+            return {"cell_rotations": rotations}
+
+        self.graph.update_all(lambda edges: {"id": edges.dst["id"]}, cacl_cell_rotation)
 
     def vert_is_deformable(self, vert_id):
         return self.vert_status[vert_id] == 1
@@ -241,43 +245,56 @@ class Deformer:
     def apply_cell_rotations(self):
         # print("Applying Cell Rotations")
 
-        # Regular b points
-        for i in range(self.n):
-            self.b_array[i] = self.calculate_b_for(i)
+        def calc_b(nodes):
+            b = torch.zeros((len(nodes), 3))
+            for i, node_id in enumerate(nodes.mailbox["id"]):
+                b[i] = self.calculate_b_for(node_id[0].item())
+            return {"b": b}
+
+        self.graph.update_all(lambda edges: {"id": edges.dst["id"]}, calc_b)
+        self.b_array[: self.n] = self.graph.ndata["b"].numpy()
 
         self.graph.ndata["verts_prime"] = torch.from_numpy(
             solve(self.laplacian_matrix, self.b_array)[: self.n]
         ).to(torch.float32)
 
     def calculate_rotation_matrix_for_cell(self, vert_id):
-        covariance_matrix = self.calculate_covariance_matrix_for_cell(vert_id)
+        # covariance_matrix = self.calculate_covariance_matrix_for_cell(vert_id)
+        neighbours = self.neighbours_of(vert_id)
+        covariance_matrix = self.calculate_batched_covariance_matrix_for_cell(
+            self.graph.ndata["verts"][vert_id][None],
+            self.graph.ndata["verts_prime"][vert_id][None],
+            self.weight_matrix[vert_id, neighbours][None],
+            self.graph.ndata["verts"][neighbours][None],
+            self.graph.ndata["verts_prime"][neighbours][None],
+        )[0]
 
         U, s, V_transpose = torch.linalg.svd(covariance_matrix)
 
         # U, s, V_transpose
         # V_transpose_transpose * U_transpose
 
+        det_sign = np.linalg.det(V_transpose.T @ U.T)
+        U[0] *= det_sign
         rotation = V_transpose.T @ U.T
-        if np.linalg.det(rotation) <= 0:
-            U[:0] *= -1
-            rotation = V_transpose.T @ U.T
         return rotation
 
-    def calculate_covariance_matrix_for_cell(self, vert_id):
-        # s_i = P_i * D_i * P_i_prime_transpose
-        vert_i_prime = self.graph.ndata["verts_prime"][vert_id]  # (N, 3)
+    def calculate_batched_covariance_matrix_for_cell(
+        self, verts, verts_prime, w_in, verts_in, verts_prime_in
+    ):
+        """
+        verts: (n, 3)
+        verts_prime: (n, 3)
+        w_in: (n, d_i)
+        verts_in: (n, d_i, 3)
+        verts_prime_in: (n, d_i, 3)
+        """
+        D_i = torch.diag_embed(w_in)  # (n, d_i, d_i)
 
-        neighbour_ids = self.neighbours_of(vert_id)  # (d_i)
+        P_i = verts[:, None] - verts_in  # (n, d_i, 3)
+        P_i_prime = verts_prime[:, None] - verts_prime_in  # (n, d_i, 3)
 
-        D_i = torch.diag(self.weight_matrix[vert_id, neighbour_ids])  # (d_i, d_i)
-
-        P_i = self.P_i_array[vert_id]  # (3, d_i)
-        P_i_prime = (
-            vert_i_prime[:, None] - self.graph.ndata["verts_prime"][neighbour_ids].T
-        )  # (3, d_i)
-
-        P_i_prime = P_i_prime.T
-        return P_i @ D_i @ P_i_prime  # (3, 3)
+        return torch.einsum("nai,nab,nbj->nij", P_i, D_i, P_i_prime)  # (n, 3, 3)
 
     def output_s_prime_to_file(self):
         # Write self.vers_prime and self.faces to a file
