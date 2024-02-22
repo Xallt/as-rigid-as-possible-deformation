@@ -15,6 +15,10 @@ class TestCube(unittest.TestCase):
         self.assertTrue(
             np.allclose(d.weight_matrix, weight_matrix_gt, atol=1e-3), "Weight matrix is not equal"
         )
+        self.assertTrue(
+            np.allclose(np.diagonal(d.weight_sum), np.sum(weight_matrix_gt, axis=1), atol=1e-3),
+            "Weight sum is not equal",
+        )
         deformation_matrix = np.load("tests/t2.npy")
         d.set_deformation(deformation_matrix)
 
