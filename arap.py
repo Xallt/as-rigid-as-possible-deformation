@@ -47,7 +47,7 @@ class Deformer:
         self.graph.ndata["verts"] = torch.from_numpy(vertices).to(torch.float32)
         self.graph.ndata["verts_prime"] = torch.from_numpy(vertices).to(torch.float32)
 
-        self.cell_rotations = torch.zeros((self.n, 3, 3))
+        self.graph.ndata["cell_rotations"] = torch.zeros((self.n, 3, 3), dtype=torch.float32)
 
         def weight_matrix(edges):
             src_id, dst_id = edges.src["id"].numpy(), edges.dst["id"].numpy()
@@ -60,8 +60,15 @@ class Deformer:
             return {"w_sum": torch.sum(node.mailbox["w"], 1)}
 
         self.graph.update_all(dgl.function.copy_e("w", "w"), weight_sum)
+        self.weight_matrix = torch.zeros((self.n, self.n), dtype=torch.float32)
+        edges = self.graph.adj().indices()
+        self.weight_matrix[edges[0], edges[1]] = self.graph.edata["w"]
 
-        print(self.graph.ndata["w_sum"])
+        self.weight_sum = torch.diag(self.graph.ndata["w_sum"])
+
+    @property
+    def cell_rotations(self):
+        return self.graph.ndata["cell_rotations"]
 
     def faces_for_edge(self, i, j):
         return [f for f in self.faces if i in f and j in f]
@@ -150,19 +157,6 @@ class Deformer:
     def neighbours_of(self, vert_id):
         return self.graph.out_edges(vert_id)[1].numpy()
 
-    @property
-    def weight_matrix(self):
-        w = self.graph.edata["w"]
-        edges = self.graph.adj().indices()
-        weight_matrix = torch.zeros((self.n, self.n))
-        for i in range(len(edges[0])):
-            weight_matrix[edges[0][i], edges[1][i]] = w[i]
-        return weight_matrix
-
-    @property
-    def weight_sum(self):
-        return torch.diag(self.graph.ndata["w_sum"])
-
     def calculate_laplacian_matrix(self):
         # initial laplacian
         # self.laplacian_matrix = self.edge_matrix - self.neighbour_matrix
@@ -180,7 +174,6 @@ class Deformer:
             vert_id = self.fixed_verts[i][0]
             new_matrix[new_i, vert_id] = 1
             new_matrix[vert_id, new_i] = 1
-        print(self.laplacian_matrix)
 
         self.laplacian_matrix = new_matrix
 
@@ -230,7 +223,7 @@ class Deformer:
         # print("Calculating Cell Rotations")
         for vert_id in range(self.n):
             rotation = self.calculate_rotation_matrix_for_cell(vert_id)
-            self.cell_rotations[vert_id] = torch.from_numpy(rotation).to(torch.float32)
+            self.cell_rotations[vert_id] = rotation
 
     def vert_is_deformable(self, vert_id):
         return self.vert_status[vert_id] == 1
@@ -240,15 +233,9 @@ class Deformer:
         for i in range(self.n):
             vert_i = self.graph.ndata["verts"][i]
             neighbour_ids = self.neighbours_of(i)
-            number_of_neighbours = len(neighbour_ids)
+            vert_j = self.graph.ndata["verts"][neighbour_ids]
 
-            P_i = torch.zeros((3, number_of_neighbours))
-
-            for n_i in range(number_of_neighbours):
-                n_id = neighbour_ids[n_i]
-
-                vert_j = self.graph.ndata["verts"][n_id]
-                P_i[:, n_i] = vert_i - vert_j
+            P_i = vert_i[:, None] - vert_j.T
             self.P_i_array.append(P_i)
 
     def apply_cell_rotations(self):
@@ -265,15 +252,15 @@ class Deformer:
     def calculate_rotation_matrix_for_cell(self, vert_id):
         covariance_matrix = self.calculate_covariance_matrix_for_cell(vert_id)
 
-        U, s, V_transpose = np.linalg.svd(covariance_matrix)
+        U, s, V_transpose = torch.linalg.svd(covariance_matrix)
 
         # U, s, V_transpose
         # V_transpose_transpose * U_transpose
 
-        rotation = V_transpose.transpose().dot(U.transpose())
+        rotation = V_transpose.T @ U.T
         if np.linalg.det(rotation) <= 0:
             U[:0] *= -1
-            rotation = V_transpose.transpose().dot(U.transpose())
+            rotation = V_transpose.T @ U.T
         return rotation
 
     def calculate_covariance_matrix_for_cell(self, vert_id):
