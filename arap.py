@@ -255,22 +255,6 @@ class Deformer:
             P_i = vert_i[:, None] - vert_j.T
             self.P_i_array.append(P_i)
 
-    def apply_cell_rotations(self):
-        # print("Applying Cell Rotations")
-
-        def calc_b(nodes):
-            b = torch.zeros((len(nodes), 3))
-            for i, node_id in enumerate(nodes.mailbox["id"]):
-                b[i] = self.calculate_b_for(node_id[0].item())
-            return {"b": b}
-
-        self.graph.update_all(lambda edges: {"id": edges.dst["id"]}, calc_b)
-        self.b_array[: self.n] = self.graph.ndata["b"].numpy()
-
-        self.graph.ndata["verts_prime"] = torch.from_numpy(
-            solve(self.laplacian_matrix, self.b_array)[: self.n]
-        ).to(torch.float32)
-
     def calculate_rotation_matrix_for_cell(
         self, verts, verts_prime, w_in, verts_in, verts_prime_in
     ):
@@ -315,15 +299,42 @@ class Deformer:
         mesh = trimesh.Trimesh(self.graph.ndata["verts_prime"], self.faces)
         mesh.export("output.off")
 
-    def calculate_b_for(self, i):
-        b = np.zeros((1, 3))
-        neighbours = self.neighbours_of(i)
-        R = self.cell_rotations[neighbours]  # (d_i, 3, 3)
-        R_avg = self.cell_rotations[i][None] + R  # (d_i, 3, 3)
-        P = self.P_i_array[i].T  # (d_i, 3)
-        b = (torch.einsum("ijk,ik->ij", R_avg, P) * self.weight_matrix[i, neighbours][:, None]).sum(
-            axis=0
-        ) / 2
+    def apply_cell_rotations(self):
+        # print("Applying Cell Rotations")
+        def b_message(edges):
+            return {
+                "verts": edges.dst["verts"],
+                "verts_in": edges.src["verts"],
+                "R": edges.dst["cell_rotations"],
+                "R_in": edges.src["cell_rotations"],
+                "w_in": edges.data["w"],
+            }
+
+        def calc_b(nodes):
+            b = self.calculate_b_for(
+                nodes.mailbox["verts"] - nodes.mailbox["verts_in"],
+                nodes.mailbox["R"][:, 0],
+                nodes.mailbox["R_in"],
+                nodes.mailbox["w_in"],
+            )
+            return {"b": b}
+
+        self.graph.update_all(b_message, calc_b)
+        self.b_array[: self.n] = self.graph.ndata["b"].numpy()
+
+        self.graph.ndata["verts_prime"] = torch.from_numpy(
+            solve(self.laplacian_matrix, self.b_array)[: self.n]
+        ).to(torch.float32)
+
+    def calculate_b_for(self, P, R, R_in, w_in):
+        """
+        P: (n, d_i, 3)
+        R: (n, 3, 3)
+        R_in: (n, d_i, 3, 3)
+        w_in: (n, d_i)
+        """
+        R_avg = R[:, None] + R_in  # (n, d_i, 3, 3)
+        b = (torch.einsum("nijk,nik->nij", R_avg, P) * w_in[..., None]).sum(axis=1) / 2
 
         return b
 
