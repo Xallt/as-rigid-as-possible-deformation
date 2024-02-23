@@ -79,9 +79,12 @@ class Deformer:
             src_id, dst_id = edges.src["id"].numpy(), edges.dst["id"].numpy()
             f = edges.data["f"].numpy()
             data = self.weight_for_pair(src_id, dst_id, f)
-            return {"w": torch.tensor(data)}
 
+            return {"w": data}
+
+        print("Precomputing weights...")
         self.graph.apply_edges(weight_matrix)
+        print("Precomputing weights done")
 
         def weight_sum(node):
             return {"w_sum": torch.sum(node.mailbox["w"], 1)}
@@ -100,6 +103,17 @@ class Deformer:
     def faces_for_edge(self, i, j):
         return [f for f in self.faces if i in f and j in f]
 
+    def other_point(self, face, i, j):
+        """
+        face: (n, 3)
+        i: (n)
+        j: (n)
+        """
+        mask = (face != i[:, None]) & (face != j[:, None])
+        other_point = face[mask]
+        assert len(other_point) == len(i)
+        return other_point
+
     def weight_for_pair(self, i, j, f):
         """
         i: (n,)
@@ -107,20 +121,21 @@ class Deformer:
         f: (n, 2)
         """
 
-        # weight equation: 0.5 * (cot(alpha) + cot(beta))
+        vertex_i = self.graph.ndata["verts"][i]  # (n, 3)
+        vertex_j = self.graph.ndata["verts"][j]  # (n, 3)
+        faces = self.faces[f]  # (n, 2, 3)
 
-        w = []
-        for t in range(len(f)):
-            vertex_i = self.graph.ndata["verts"][i[t]]
-            vertex_j = self.graph.ndata["verts"][j[t]]
-            cot_theta_sum = 0
-            for face in f[t]:
-                face = self.faces[face]
-                other_vertex_id = face_utils.other_point(face.tolist(), i[t], j[t])
-                vertex_o = self.graph.ndata["verts"][other_vertex_id]
-                theta = omath.angle_between(vertex_i - vertex_o, vertex_j - vertex_o)
-                cot_theta_sum += omath.cot(theta)
-            w.append(cot_theta_sum * 0.5)
+        w = torch.zeros((len(i),), dtype=torch.float32)
+        for fn in range(2):
+            face = faces[:, fn]
+            other_vertex_id = self.other_point(face, i, j)
+            vertex_o = self.graph.ndata["verts"][other_vertex_id]  # (n, 3)
+            e1 = vertex_i - vertex_o
+            e2 = vertex_j - vertex_o
+            theta = np.arccos(
+                (e1 * e2).sum(1) / (np.linalg.norm(e1, axis=1) * np.linalg.norm(e2, axis=1))
+            )
+            w += np.cos(theta) / np.sin(theta) * 0.5
 
         return w
 
