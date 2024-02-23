@@ -33,7 +33,6 @@ class TestCube(unittest.TestCase):
             np.allclose(mesh_o_gt.vertices, d.verts_prime, atol=1e-3), "Vertices are not equal"
         )
         self.assertTrue(np.isclose(d.calculate_energy(), 6.0846, atol=1e-3), "Energy is not equal")
-        print()
 
 
 if __name__ == "__main__":
