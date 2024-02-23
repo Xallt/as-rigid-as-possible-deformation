@@ -221,13 +221,26 @@ class Deformer:
         return abs(self.current_energy - iteration_energy) < self.threshold
 
     def calculate_cell_rotations(self):
+        def rot_message(edges):
+            return {
+                "verts": edges.dst["verts"],
+                "verts_prime": edges.dst["verts_prime"],
+                "w": edges.data["w"],
+                "verts_in": edges.src["verts"],
+                "verts_prime_in": edges.src["verts_prime"],
+            }
+
         def cacl_cell_rotation(nodes):
-            rotations = torch.zeros((len(nodes), 3, 3))
-            for i, node_id in enumerate(nodes.mailbox["id"]):
-                rotations[i] = self.calculate_rotation_matrix_for_cell(node_id[0].item())
+            rotations = self.calculate_rotation_matrix_for_cell(
+                nodes.mailbox["verts"][:, 0],
+                nodes.mailbox["verts_prime"][:, 0],
+                nodes.mailbox["w"],
+                nodes.mailbox["verts_in"],
+                nodes.mailbox["verts_prime_in"],
+            )
             return {"cell_rotations": rotations}
 
-        self.graph.update_all(lambda edges: {"id": edges.dst["id"]}, cacl_cell_rotation)
+        self.graph.update_all(rot_message, cacl_cell_rotation)
 
     def vert_is_deformable(self, vert_id):
         return self.vert_status[vert_id] == 1
@@ -258,25 +271,26 @@ class Deformer:
             solve(self.laplacian_matrix, self.b_array)[: self.n]
         ).to(torch.float32)
 
-    def calculate_rotation_matrix_for_cell(self, vert_id):
+    def calculate_rotation_matrix_for_cell(
+        self, verts, verts_prime, w_in, verts_in, verts_prime_in
+    ):
+        """
+        verts: (n, 3)
+        verts_prime: (n, 3)
+        w_in: (n, d_i)
+        verts_in: (n, d_i, 3)
+        verts_prime_in: (n, d_i, 3)
+        """
         # covariance_matrix = self.calculate_covariance_matrix_for_cell(vert_id)
-        neighbours = self.neighbours_of(vert_id)
         covariance_matrix = self.calculate_batched_covariance_matrix_for_cell(
-            self.graph.ndata["verts"][vert_id][None],
-            self.graph.ndata["verts_prime"][vert_id][None],
-            self.weight_matrix[vert_id, neighbours][None],
-            self.graph.ndata["verts"][neighbours][None],
-            self.graph.ndata["verts_prime"][neighbours][None],
-        )[0]
+            verts, verts_prime, w_in, verts_in, verts_prime_in
+        )  # (n, 3, 3)
 
-        U, s, V_transpose = torch.linalg.svd(covariance_matrix)
+        U, s, V_transpose = torch.linalg.svd(covariance_matrix)  # (n, 3, 3), (n, 3), (n, 3, 3)
 
-        # U, s, V_transpose
-        # V_transpose_transpose * U_transpose
-
-        det_sign = np.linalg.det(V_transpose.T @ U.T)
-        U[0] *= det_sign
-        rotation = V_transpose.T @ U.T
+        det_sign = torch.linalg.det(V_transpose @ U)
+        U[:, 0] *= det_sign
+        rotation = V_transpose.swapaxes(1, 2) @ U.swapaxes(1, 2)  # (n, 3, 3)
         return rotation
 
     def calculate_batched_covariance_matrix_for_cell(
