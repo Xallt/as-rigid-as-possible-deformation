@@ -9,6 +9,7 @@ import json
 from tqdm.auto import tqdm
 import torch
 import dgl
+from itertools import combinations
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -34,25 +35,51 @@ class Deformer:
         self.POWER = float("Inf")
         self.stop_flag = False
 
+    def get_edge_to_face_map(self, edges, faces):
+        n = faces.max() + 1
+
+        # Map from edge id to 2 face ids
+        edge2face = np.zeros((n * n, 2), dtype=np.int32)
+        # For each edge id, the number of faces it has been associated with so far
+        edgec = np.zeros((n * n,), dtype=np.int8)
+
+        for i in range(3):
+            j = (i + 1) % 3
+            e1, e2 = faces[:, i], faces[:, j]
+            edge_id = e1 * n + e2
+            edge2face[edge_id, edgec[edge_id]] = np.arange(len(faces))
+            edgec[edge_id] += 1
+            edge_id = e2 * n + e1
+            edge2face[edge_id, edgec[edge_id]] = np.arange(len(faces))
+            edgec[edge_id] += 1
+
+        assert np.all(~((edgec > 0) & (edgec != 2))), "Some edges are not shared by exactly 2 faces"
+
+        edge_id = edges[:, 0] * n + edges[:, 1]
+        return edge2face[edge_id]
+
     def set_mesh(self, vertices, faces):
         self.n = len(vertices)
         self.vertices = vertices
         self.faces = faces
         edges = np.concatenate((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [0, 2]]), axis=0)
         edges = np.concatenate((edges, np.flip(edges, axis=1)), axis=0)
-        edges = np.unique(edges, axis=0).tolist()
+        self.edges = np.unique(edges, axis=0)
 
-        self.graph = dgl.graph(edges)
+        self.graph = dgl.graph(self.edges.tolist())
         self.graph.ndata["id"] = torch.arange(len(self.vertices))
         self.graph.ndata["verts"] = torch.from_numpy(vertices).to(torch.float32)
         self.graph.ndata["verts_prime"] = torch.from_numpy(vertices).to(torch.float32)
-
         self.graph.ndata["cell_rotations"] = torch.zeros((self.n, 3, 3), dtype=torch.float32)
+        self.graph.edata["f"] = torch.from_numpy(
+            self.get_edge_to_face_map(self.edges, self.faces)
+        ).to(torch.int32)
 
         def weight_matrix(edges):
             src_id, dst_id = edges.src["id"].numpy(), edges.dst["id"].numpy()
-            data = {"w": torch.tensor([self.weight_for_pair(i, j) for i, j in zip(src_id, dst_id)])}
-            return data
+            f = edges.data["f"].numpy()
+            data = self.weight_for_pair(src_id, dst_id, f)
+            return {"w": torch.tensor(data)}
 
         self.graph.apply_edges(weight_matrix)
 
@@ -73,23 +100,29 @@ class Deformer:
     def faces_for_edge(self, i, j):
         return [f for f in self.faces if i in f and j in f]
 
-    def weight_for_pair(self, i, j):
-        local_faces = self.faces_for_edge(i, j)
-        # Either a normal face or a boundry edge, otherwise bad mesh
-        assert len(local_faces) <= 2
-
-        vertex_i = self.graph.ndata["verts"][i]
-        vertex_j = self.graph.ndata["verts"][j]
+    def weight_for_pair(self, i, j, f):
+        """
+        i: (n,)
+        j: (n,)
+        f: (n, 2)
+        """
 
         # weight equation: 0.5 * (cot(alpha) + cot(beta))
 
-        cot_theta_sum = 0
-        for face in local_faces:
-            other_vertex_id = face_utils.other_point(face, i, j)
-            vertex_o = self.graph.ndata["verts"][other_vertex_id]
-            theta = omath.angle_between(vertex_i - vertex_o, vertex_j - vertex_o)
-            cot_theta_sum += omath.cot(theta)
-        return cot_theta_sum * 0.5
+        w = []
+        for t in range(len(f)):
+            vertex_i = self.graph.ndata["verts"][i[t]]
+            vertex_j = self.graph.ndata["verts"][j[t]]
+            cot_theta_sum = 0
+            for face in f[t]:
+                face = self.faces[face]
+                other_vertex_id = face_utils.other_point(face.tolist(), i[t], j[t])
+                vertex_o = self.graph.ndata["verts"][other_vertex_id]
+                theta = omath.angle_between(vertex_i - vertex_o, vertex_j - vertex_o)
+                cot_theta_sum += omath.cot(theta)
+            w.append(cot_theta_sum * 0.5)
+
+        return w
 
     def assign_values_to_neighbour_matrix(self, v1, v2, v3):
         self.neighbour_matrix[v1, v2] = 1
@@ -100,7 +133,7 @@ class Deformer:
         self.neighbour_matrix[v3, v2] = 1
 
     def reset(self):
-        self.graph.ndata["verts_prime"] = self.graph.ndata["verts"].copy()
+        self.graph.ndata["verts_prime"] = self.graph.ndata["verts"].clone()
 
     def set_selection(self, selection_ids, fixed_ids):
         self.vert_status = [1] * self.n
@@ -161,7 +194,6 @@ class Deformer:
         # initial laplacian
         # self.laplacian_matrix = self.edge_matrix - self.neighbour_matrix
         self.laplacian_matrix = self.weight_sum - self.weight_matrix
-        print(self.laplacian_matrix.shape)
         fixed_verts_num = len(self.fixed_verts)
         # for each constrained point, add a new row and col
         new_n = self.n + fixed_verts_num
@@ -272,8 +304,8 @@ class Deformer:
 
         U, s, V_transpose = torch.linalg.svd(covariance_matrix)  # (n, 3, 3), (n, 3), (n, 3, 3)
 
-        det_sign = torch.linalg.det(V_transpose @ U)
-        U[:, 0] *= det_sign
+        det_sign = torch.linalg.det(V_transpose @ U)  # (n,)
+        U[:, 0] *= det_sign[:, None]
         rotation = V_transpose.swapaxes(1, 2) @ U.swapaxes(1, 2)  # (n, 3, 3)
         return rotation
 
