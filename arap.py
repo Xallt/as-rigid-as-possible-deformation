@@ -31,7 +31,8 @@ class Deformer:
     max_iterations = 100
     threshold = 0.001
 
-    def __init__(self):
+    def __init__(self, device="cuda"):
+        self.device = device
         self.POWER = float("Inf")
         self.stop_flag = False
 
@@ -66,18 +67,24 @@ class Deformer:
         edges = np.concatenate((edges, np.flip(edges, axis=1)), axis=0)
         self.edges = np.unique(edges, axis=0)
 
-        self.graph = dgl.graph(self.edges.tolist())
-        self.graph.ndata["id"] = torch.arange(len(self.vertices))
-        self.graph.ndata["verts"] = torch.from_numpy(vertices).to(torch.float32)
-        self.graph.ndata["verts_prime"] = torch.from_numpy(vertices).to(torch.float32)
-        self.graph.ndata["cell_rotations"] = torch.zeros((self.n, 3, 3), dtype=torch.float32)
-        self.graph.edata["f"] = torch.from_numpy(
-            self.get_edge_to_face_map(self.edges, self.faces)
-        ).to(torch.int32)
+        self.graph = dgl.graph(self.edges.tolist(), device=self.device)
+        self.graph.ndata["id"] = torch.arange(len(self.vertices), device=self.device)
+        self.graph.ndata["verts"] = torch.from_numpy(vertices).to(torch.float32).to(self.device)
+        self.graph.ndata["verts_prime"] = (
+            torch.from_numpy(vertices).to(torch.float32).to(self.device)
+        )
+        self.graph.ndata["cell_rotations"] = torch.zeros((self.n, 3, 3), dtype=torch.float32).to(
+            self.device
+        )
+        self.graph.edata["f"] = (
+            torch.from_numpy(self.get_edge_to_face_map(self.edges, self.faces))
+            .to(torch.int32)
+            .to(self.device)
+        )
 
         def weight_matrix(edges):
-            src_id, dst_id = edges.src["id"].numpy(), edges.dst["id"].numpy()
-            f = edges.data["f"].numpy()
+            src_id, dst_id = edges.src["id"].cpu().numpy(), edges.dst["id"].cpu().numpy()
+            f = edges.data["f"].cpu().numpy()
             data = self.weight_for_pair(src_id, dst_id, f)
 
             return {"w": data}
@@ -90,7 +97,7 @@ class Deformer:
             return {"w_sum": torch.sum(node.mailbox["w"], 1)}
 
         self.graph.update_all(dgl.function.copy_e("w", "w"), weight_sum)
-        self.weight_matrix = torch.zeros((self.n, self.n), dtype=torch.float32)
+        self.weight_matrix = torch.zeros((self.n, self.n), dtype=torch.float32, device=self.device)
         edges = self.graph.adj().indices()
         self.weight_matrix[edges[0], edges[1]] = self.graph.edata["w"]
 
@@ -125,17 +132,18 @@ class Deformer:
         vertex_j = self.graph.ndata["verts"][j]  # (n, 3)
         faces = self.faces[f]  # (n, 2, 3)
 
-        w = torch.zeros((len(i),), dtype=torch.float32)
+        w = torch.zeros((len(i),), dtype=torch.float32, device=self.device)
         for fn in range(2):
             face = faces[:, fn]
             other_vertex_id = self.other_point(face, i, j)
             vertex_o = self.graph.ndata["verts"][other_vertex_id]  # (n, 3)
             e1 = vertex_i - vertex_o
             e2 = vertex_j - vertex_o
-            theta = np.arccos(
-                (e1 * e2).sum(1) / (np.linalg.norm(e1, axis=1) * np.linalg.norm(e2, axis=1))
+            theta = torch.acos(
+                (e1 * e2).sum(1) / (torch.linalg.norm(e1, dim=1) * torch.linalg.norm(e2, dim=1))
             )
-            w += np.cos(theta) / np.sin(theta) * 0.5
+            theta_cot = torch.cos(theta) / torch.sin(theta)
+            w += theta_cot * 0.5
 
         return w
 
@@ -157,12 +165,14 @@ class Deformer:
         for i in selection_ids:
             self.vert_status[i] = 2
             self.selected_verts.append(i)
-            self.fixed_verts.append(
-                (i, omath.apply_rotation(self.deformation_matrix, self.graph.ndata["verts"][i]))
-            )
+            deformed_vec = (
+                self.deformation_matrix
+                @ omath.to_homogeneous(self.graph.ndata["verts"][i].cpu().numpy())
+            )[..., :3]
+            self.fixed_verts.append((i, deformed_vec))
         for i in fixed_ids:
             self.vert_status[i] = 0
-            self.fixed_verts.append((i, self.graph.ndata["verts"][i]))
+            self.fixed_verts.append((i, self.graph.ndata["verts"][i].cpu().numpy()))
 
     # Reads the .sel file and keeps track of the selection status of a vertex
     def read_selection_file(self, filename):
@@ -212,7 +222,7 @@ class Deformer:
         fixed_verts_num = len(self.fixed_verts)
         # for each constrained point, add a new row and col
         new_n = self.n + fixed_verts_num
-        new_matrix = matrix((new_n, new_n), dtype=np.float32)
+        new_matrix = torch.zeros((new_n, new_n), dtype=torch.float32, device=self.device)
         # Assign old values to new matrix
         new_matrix[: self.n, : self.n] = self.laplacian_matrix
         # Add 1s in the row and column associated with the fixed point to constain it
@@ -242,10 +252,13 @@ class Deformer:
         # initialize b and assign constraints
         number_of_fixed_verts = len(self.fixed_verts)
 
-        self.b_array = np.zeros((self.n + number_of_fixed_verts, 3))
+        self.b_array = torch.zeros(
+            (self.n + number_of_fixed_verts, 3), dtype=torch.float32, device=self.device
+        )
         # Constraint b points
+
         for i in range(number_of_fixed_verts):
-            self.b_array[self.n + i] = self.fixed_verts[i][1]
+            self.b_array[self.n + i] = torch.from_numpy(self.fixed_verts[i][1]).to(self.b_array)
 
         # Apply following deformation iterations
         pbar = tqdm(range(iterations))
@@ -358,11 +371,11 @@ class Deformer:
             return {"b": b}
 
         self.graph.update_all(b_message, calc_b)
-        self.b_array[: self.n] = self.graph.ndata["b"].numpy()
+        self.b_array[: self.n] = self.graph.ndata["b"]
 
-        self.graph.ndata["verts_prime"] = torch.from_numpy(
-            solve(self.laplacian_matrix, self.b_array)[: self.n]
-        ).to(torch.float32)
+        self.graph.ndata["verts_prime"] = torch.linalg.solve(self.laplacian_matrix, self.b_array)[
+            : self.n
+        ]
 
     def calculate_b_for(self, P, R, R_in, w_in):
         """
