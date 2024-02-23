@@ -229,8 +229,9 @@ class Deformer:
         self.stop_flag = True
 
     def apply_deformation(self, iterations):
-        self.precompute_p_i()
+        print("Precomputing laplacian matrix...")
         self.calculate_laplacian_matrix()
+        print("Precomputing laplacian done")
         print("Length of sel verts", len(self.selected_verts))
 
         if iterations < 0:
@@ -291,16 +292,6 @@ class Deformer:
 
     def vert_is_deformable(self, vert_id):
         return self.vert_status[vert_id] == 1
-
-    def precompute_p_i(self):
-        self.P_i_array = []
-        for i in range(self.n):
-            vert_i = self.graph.ndata["verts"][i]
-            neighbour_ids = self.neighbours_of(i)
-            vert_j = self.graph.ndata["verts"][neighbour_ids]
-
-            P_i = vert_i[:, None] - vert_j.T
-            self.P_i_array.append(P_i)
 
     def calculate_rotation_matrix_for_cell(
         self, verts, verts_prime, w_in, verts_in, verts_prime_in
