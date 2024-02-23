@@ -377,28 +377,51 @@ class Deformer:
         return b
 
     def calculate_energy(self):
-        total_energy = 0
-        for i in range(self.n):
-            total_energy += self.energy_of_cell(i)
-        return total_energy
+        def energy_message(edges):
+            return {
+                "w": edges.data["w"],
+                "verts_in": edges.src["verts"],
+                "verts_prime_in": edges.src["verts_prime"],
+            }
 
-    def energy_of_cell(self, i):
-        neighbours = self.neighbours_of(i)
-        total_energy = 0
-        for j in neighbours:
-            w_ij = self.weight_matrix[i, j]
-            e_ij_prime = self.graph.ndata["verts_prime"][i] - self.graph.ndata["verts_prime"][j]
-            e_ij = self.graph.ndata["verts"][i] - self.graph.ndata["verts"][j]
-            r_i = self.cell_rotations[i]
-            value = e_ij_prime - r_i @ e_ij
-            if self.POWER == float("Inf"):
-                norm_power = torch.max(torch.abs(value))
-            else:
-                norm_power = np.power(value, self.POWER)
-                norm_power = np.sum(norm_power)
-            # total_energy += w_ij * np.linalg.norm(, ord=self.POWER) ** self.POWER
-            total_energy += w_ij * norm_power
-        return total_energy
+        def calc_energy(nodes):
+            w_in = nodes.mailbox["w"]
+            verts = nodes.data["verts"]
+            verts_prime = nodes.data["verts_prime"]
+            verts_in = nodes.mailbox["verts_in"]
+            verts_prime_in = nodes.mailbox["verts_prime_in"]
+            R = nodes.data["cell_rotations"]
+            energy = self.energy_of_cell(
+                w_in,
+                verts,
+                verts_in,
+                verts_prime,
+                verts_prime_in,
+                R,
+            )
+            return {"energy": energy}
+
+        self.graph.update_all(energy_message, calc_energy)
+        return self.graph.ndata["energy"].sum()
+
+    def energy_of_cell(self, w_in, verts, verts_in, verts_prime, verts_prime_in, R):
+        """
+        w_in: (n, d_i,)
+        verts: (n, 3)
+        verts_in: (n, d_i, 3)
+        verts_prime: (n, 3)
+        verts_prime_in: (n, d_i, 3)
+        R: (n, 3, 3)
+        """
+        e_prime = verts_prime[:, None] - verts_prime_in  # (n, d_i, 3)
+        e = verts[:, None] - verts_in  # (n, d_i, 3)
+        value = e_prime - torch.einsum("nij,nbj->nbi", R, e)  # (n, d_i, 3)
+        if self.POWER == float("Inf"):
+            norm_power = torch.max(torch.abs(value), -1).values  # (n, d_i)
+        else:
+            norm_power = torch.pow(value, self.POWER)
+            norm_power = torch.sum(norm_power, -1)  # (n, d_i)
+        return torch.sum(w_in * norm_power, -1)
 
     @property
     def verts_prime(self):
