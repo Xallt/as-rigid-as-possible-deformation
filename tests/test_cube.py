@@ -25,8 +25,6 @@ class TestCube(unittest.TestCase):
         with open("tests/sel.json", "r") as f:
             selection = json.load(f)
         d.set_selection(selection["selection"], selection["fixed"])
-        d.calculate_laplacian_matrix()
-        d.precompute_p_i()
         d.apply_deformation(100)
         d.output_s_prime_to_file()
 
