@@ -16,11 +16,13 @@ if __name__ == "__main__":
 
     d = Deformer()
     d.set_mesh(mesh.vertices, mesh.faces)
-    deformation_matrix = np.load("tests/t2.npy")
+    deformation_matrix = np.load("tests/cube/t2.npy")
     d.set_deformation(deformation_matrix)
 
-    with open("tests/sel.json", "r") as f:
+    with open("tests/cube/sel.json", "r") as f:
         selection = json.load(f)
     d.set_selection(selection["selection"], selection["fixed"])
 
     cProfile.run(f"d.apply_deformation({args.num_iterations})", sort="cumtime")
+
+    d.output_s_prime_to_file()
