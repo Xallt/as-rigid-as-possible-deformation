@@ -292,7 +292,7 @@ class Deformer:
 
         rotation = V_transpose.transpose().dot(U.transpose())
         if np.linalg.det(rotation) <= 0:
-            U[:0] *= -1
+            U[0] *= -1
             rotation = V_transpose.transpose().dot(U.transpose())
         return rotation
 
