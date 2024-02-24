@@ -347,7 +347,7 @@ class Deformer:
 
     def output_s_prime_to_file(self):
         # Write self.vers_prime and self.faces to a file
-        mesh = trimesh.Trimesh(self.graph.ndata["verts_prime"], self.faces)
+        mesh = trimesh.Trimesh(self.graph.ndata["verts_prime"].cpu().numpy(), self.faces)
         mesh.export("output.off")
 
     def apply_cell_rotations(self):
