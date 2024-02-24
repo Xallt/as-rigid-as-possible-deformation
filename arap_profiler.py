@@ -8,6 +8,7 @@ import cProfile
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run ARAP on a mesh")
     parser.add_argument("mesh_path", type=str, help="Path to the mesh file")
+    parser.add_argument("num_iterations", type=int, help="Number of iterations to run ARAP for")
 
     args = parser.parse_args()
 
@@ -22,4 +23,4 @@ if __name__ == "__main__":
         selection = json.load(f)
     d.set_selection(selection["selection"], selection["fixed"])
 
-    cProfile.run("d.apply_deformation(100)", sort="cumtime")
+    cProfile.run(f"d.apply_deformation({args.num_iterations})", sort="cumtime")
