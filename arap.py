@@ -40,7 +40,7 @@ class Deformer:
         n = faces.max() + 1
 
         # Map from edge id to 2 face ids
-        edge2face = np.zeros((n * n, 2), dtype=np.int32)
+        edge2face = np.zeros((n * n, 2), dtype=np.int32) - 1
         # For each edge id, the number of faces it has been associated with so far
         edgec = np.zeros((n * n,), dtype=np.int8)
 
@@ -54,7 +54,7 @@ class Deformer:
             edge2face[edge_id, edgec[edge_id]] = np.arange(len(faces))
             edgec[edge_id] += 1
 
-        assert np.all(~((edgec > 0) & (edgec != 2))), "Some edges are not shared by exactly 2 faces"
+        # assert np.all(~((edgec > 0) & (edgec != 2))), f"Some edges are not shared by exactly 2 faces ({np.unique(edgec, return_counts=True)})"
 
         edge_id = edges[:, 0] * n + edges[:, 1]
         return edge2face[edge_id]
@@ -135,15 +135,16 @@ class Deformer:
         w = torch.zeros((len(i),), dtype=torch.float32, device=self.device)
         for fn in range(2):
             face = faces[:, fn]
-            other_vertex_id = self.other_point(face, i, j)
+            mask = f[:, fn] != -1
+            other_vertex_id = self.other_point(face[mask], i[mask], j[mask])
             vertex_o = self.graph.ndata["verts"][other_vertex_id]  # (n, 3)
-            e1 = vertex_i - vertex_o
-            e2 = vertex_j - vertex_o
+            e1 = vertex_i[mask] - vertex_o
+            e2 = vertex_j[mask] - vertex_o
             theta = torch.acos(
                 (e1 * e2).sum(1) / (torch.linalg.norm(e1, dim=1) * torch.linalg.norm(e2, dim=1))
             )
             theta_cot = torch.cos(theta) / torch.sin(theta)
-            w += theta_cot * 0.5
+            w[mask] += theta_cot * 0.5
 
         return w
 
